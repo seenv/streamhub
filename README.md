@@ -93,9 +93,13 @@ Consumer:
 ```
 
 Then, on the server run:
-```iperf3 -s -p 5074```
+```
+iperf3 -s -p 5074
+```
 and on the client:
-```iperf3 -c 192.168.30.10 -p 5100```
+```
+iperf3 -c 192.168.30.10 -p 5100
+```
 ---
 
 ## Acknowledgments
