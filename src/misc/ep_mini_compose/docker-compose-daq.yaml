@@ -1,0 +1,20 @@
+version: '3.8'
+
+
+services:
+  daq:
+    image: seenv/ministream-daq:latest
+    #depends_on:
+      #- producer
+    #network_mode: "service:producer"
+    network_mode: "host"
+    volumes:
+      - /home/seena/mini/output:/output
+    #ports:
+    #  - "50000:50000"
+    #  - "50001:50001"
+    command: >
+      bash -c "sleep 30 && python /aps-mini-apps/build/python/streamer-daq/DAQStream.py --mode 1 --simulation_file /aps-mini-apps/data/tomo_00058_all_subsampled1p_s1079s1081.h5 --d_iteration 1 --publisher_addr tcp://*:50000 --iteration_sleep 1 --synch_addr tcp://*:50001 --synch_count 1"
+    #command: ["tail", "-f", "/dev/null"]
+  
+

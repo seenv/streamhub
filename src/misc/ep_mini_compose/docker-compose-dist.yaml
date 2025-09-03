@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+
+  dist:
+    image: seenv/ministream-dist:latest
+    #depends_on:
+    #  - streamer-daq
+    #network_mode: "service:producer"
+    network_mode: "host"
+    volumes:
+      - /home/seena/mini/output:/output
+    #ports:
+    #  - "50000:50000"
+    #  - "50001:50001"
+    #  - "5074:5074"
+    command: >
+      bash -c "sleep 35 && python /aps-mini-apps/build/python/streamer-dist/ModDistStreamPubDemo.py --data_source_addr tcp://128.135.24.117:50000 --data_source_synch_addr tcp://128.135.24.117:50001 --cast_to_float32 --normalize --my_distributor_addr tcp://*:5074 --beg_sinogram 1000 --num_sinograms 2 --num_columns 2560"
+    #command: ["tail", "-f", "/dev/null"]

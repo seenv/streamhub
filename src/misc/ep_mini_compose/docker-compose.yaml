@@ -1,0 +1,22 @@
+version: '3.8'
+
+
+services:
+
+  sirt:
+    image: seenv/ministream-sirt:latest
+    #depends_on:
+      #- consumer
+    #network_mode: "service:consumer"
+    network_mode: "host"
+    volumes:
+      - /home/seena/mini/output:/output
+    #ports:
+      #- "50000:50000"
+      #- "50001:50001"
+      #- "5074:5074"
+    command: >
+      bash -c "sleep 40 && /aps-mini-apps/build/bin/sirt_stream --write-freq 4 --dest-host 128.135.164.120 --dest-port 5074 --window-iter 1 --window-step 4 --window-length 4 -t 2 -c 1427 --pub-addr tcp://*:52000 --recon-output-dir /output"
+    #command: ["tail", "-f", "/dev/null"]
+
+
