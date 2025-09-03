@@ -75,11 +75,9 @@ This will:
 
 ### Test the stream with iPerf3:
 - On the Producer start iPerf's server:
-```iperf3 -s -p <PORT-NUMBER>      #default ports are defined on the configuration file in "src/config.py"
-```
+```iperf3 -s -p <PORT-NUMBER>      #default ports are defined on the configuration file in "src/config.py"```
 - On the Consumer endpoint start iPerf's client:
-```iperf3 -c <C2CS's-LOCAL-IPV4> -p <C2CS's-LISTENING-PORT>
-```
+```iperf3 -c <C2CS's-LOCAL-IPV4> -p <C2CS's-LISTENING-PORT>```
 For example if the IP addresses are like:
 ```
 Producer:
@@ -93,7 +91,8 @@ C2CS: (Consumers gateway)
 Consumer:
   local:   192.168.30.11
 ```
-then, on the server:
+
+Then, on the server run:
 ```iperf3 -s -p 5074```
 and on the client:
 ```iperf3 -c 192.168.30.10 -p 5100```
