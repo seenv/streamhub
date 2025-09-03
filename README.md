@@ -1,6 +1,7 @@
 # StreamHub
 
 StreamHub is a secure, end-to-end scientific data streaming platform that leverages the high-performance data streaming capabilities of SciStream, the remote function execution capabilities of Globus Compute, and the secure authentication and authorization fabric of Globus Auth. The architecture of StreamHub extends SciStream by introducing a secure, federated control layer that simplifies the initiation and management of real-time scientific data streams.
+
 ---
 
 ##  Features
