@@ -36,7 +36,7 @@ StreamHub is an orchestrated, secure, and high-performance framework for configu
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/<your-org>/streamhub.git
+git clone https://github.com/seenv/streamhub.git
 cd streamhub
 ```
 
