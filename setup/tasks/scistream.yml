@@ -1,0 +1,25 @@
+- name: Install SciStream
+  become: false
+  git:
+    repo: https://github.com/scistream/scistream-proto.git
+    dest: "{{ home }}/scistream-proto"
+    clone: yes
+    update: no
+
+- name: Comment out broken readme line in pyproject.toml
+  become: false
+  replace:
+    path: "{{ home }}/scistream-proto/pyproject.toml"
+    regexp: '^(\s*readme\s*=.*)$'
+    replace: '# \1'
+
+- name: Install poetry dependencies inside .venv
+  become: false
+  shell: |
+    source {{ venv }}/bin/activate
+    cd {{ home }}/scistream-proto
+    poetry install
+  args:
+    executable: /bin/bash
+  environment:
+    POETRY_VIRTUALENVS_CREATE: "false"

@@ -1,0 +1,29 @@
+- name: Load tcp_bbr module
+  become: true
+  modprobe:
+    name: tcp_bbr
+    state: present
+
+
+- name: Apply sysctl tuning
+  become: true
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+    reload: yes
+  loop:
+    - { name: 'net.core.rmem_max', value: '67108864' }
+    - { name: 'net.core.wmem_max', value: '67108864' }
+    - { name: 'net.ipv4.tcp_rmem', value: '4096 87380 67108864' }
+    - { name: 'net.ipv4.tcp_wmem', value: '4096 65536 67108864' }
+    - { name: 'net.ipv4.tcp_no_metrics_save', value: '1' }
+    - { name: 'net.core.default_qdisc', value: 'fq' }
+
+  #also add the ring buffer size sudo ethtool -G eno1np0 tx 1024 rx 1024
+
+- name: Apply fq discipline
+  become: true
+  command: tc qdisc replace dev eno1np0 root fq maxrate 4gbit horizon 100ms
+  ignore_errors: true
+

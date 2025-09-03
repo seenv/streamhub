@@ -1,0 +1,14 @@
+- name: Create Python venv
+  become: false
+  command: python3 -m venv {{ venv }}
+  args:
+    creates: "{{ venv }}/bin/python"
+
+- name: Upgrade pip, setuptools, wheel in venv
+  become: false
+  command: "{{ venv }}/bin/python -m pip install --upgrade pip setuptools wheel"
+
+- name: Install required Python packages in venv
+  become: false
+  command: "{{ venv }}/bin/python -m pip install notebook jupyter ipykernel scrapy pyshark scapy requests numpy pandas matplotlib scikit-learn pyroute2 poetry"
+

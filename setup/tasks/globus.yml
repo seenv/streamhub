@@ -1,0 +1,10 @@
+- name: Install and start Globus Compute Endpoint
+  become: false
+  shell: |
+    source {{ venv }}/bin/activate
+    pip install globus-compute-endpoint --quiet
+    globus-compute-endpoint configure {{ hostname }}
+    globus-compute-endpoint start {{ hostname }}
+    globus-compute-endpoint list
+  args:
+    executable: /bin/bash

@@ -1,0 +1,48 @@
+- name: Configure SciStream node
+  hosts: localhost
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Get real (non-root) username
+      become: false
+      command: whoami
+      register: user
+
+    - name: Get real home directory
+      become: false
+      command: bash -c "eval echo ~$USER"
+      register: home
+      environment:
+        USER: "{{ user.stdout }}"
+
+    - name: Get current shell
+      become: false
+      shell: echo $SHELL
+      register: shell
+
+    - name: Get hostname
+      become: false
+      command: hostname
+      register: hostname
+
+    - name: Set dynamic variables
+      set_fact:
+        user: "{{ user.stdout }}"
+        home: "{{ home.stdout }}"
+        hostname: "{{ hostname.stdout }}"
+        venv: "{{ home.stdout }}/.venv"
+
+    - import_tasks: tasks/packages.yml      #fix the iftop: sudo setcap cap_net_raw,cap_net_admin=eip /usr/sbin/iftop
+    - import_tasks: tasks/firewall.yml
+    - import_tasks: tasks/docker.yml
+    - import_tasks: tasks/ssh.yml
+    - import_tasks: tasks/sshfs.yml
+    - import_tasks: tasks/sysctl.yml
+    - import_tasks: tasks/bash.yml
+    - import_tasks: tasks/tshark.yml
+    - import_tasks: tasks/nginx.yml
+    - import_tasks: tasks/iperf.yml
+    - import_tasks: tasks/python.yml
+    - import_tasks: tasks/scistream.yml
+    - import_tasks: tasks/globus.yml

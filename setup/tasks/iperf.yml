@@ -1,0 +1,40 @@
+- name: Create iperf directory
+  #become: true
+  file:
+    path: "{{ ansible_user_dir }}/iperf"
+    state: directory
+
+- name: Download libiperf0
+  #become: true
+  get_url:
+    url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/libiperf0_3.16-1build2_amd64.deb
+    dest: "{{ ansible_user_dir }}/iperf/libiperf0.deb"
+
+- name: Download libiperf-dev
+  #become: true
+  get_url:
+    url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/libiperf-dev_3.16-1build2_amd64.deb
+    dest: "{{ ansible_user_dir }}/iperf/libiperf-dev.deb"
+
+- name: Download iperf3
+  #become: true
+  get_url:
+    url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/iperf3_3.16-1build2_amd64.deb
+    dest: "{{ ansible_user_dir }}/iperf/iperf3.deb"
+
+- name: Install deb packages
+  become: true
+  apt:
+    deb: "{{ item }}"
+    state: present
+  loop:
+    - "{{ ansible_user_dir }}/iperf/libiperf0.deb"
+    - "{{ ansible_user_dir }}/iperf/libiperf-dev.deb"
+    - "{{ ansible_user_dir }}/iperf/iperf3.deb"
+
+- name: Remove iperf directory
+  #become: true
+  file:
+    path: "{{ ansible_user_dir }}/iperf"
+    state: absent
+

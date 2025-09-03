@@ -1,0 +1,13 @@
+- name: Purge nginx
+  become: true
+  apt:
+    name: nginx
+    state: absent
+
+- name: Add nginx official repo
+  become: true
+  shell: |
+    curl -fsSL https://nginx.org/keys/nginx_signing.key | apt-key add -
+    echo "deb http://nginx.org/packages/ubuntu/ $(lsb_release -cs) nginx" > /etc/apt/sources.list.d/nginx.list
+    apt update && apt install -y nginx
+
