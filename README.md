@@ -106,4 +106,4 @@ iperf3 -c 192.168.30.10 -p 5100
 
 - [**SciStream**](https://github.com/scistream/scistream-proto) – Secure streaming framework for scientific data.
 - [**Globus Compute**](https://www.globus.org/compute) – Federated orchestration of distributed tasks.
-- **APS Mini-App** – Reference workloads for streaming evaluation.
+- [**APS Mini-App**](https://github.com/diaspora-project/aps-mini-apps) – Reference workloads for streaming evaluation.
