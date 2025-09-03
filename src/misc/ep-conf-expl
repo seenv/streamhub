@@ -1,9 +1,0 @@
-display_name: daq
-engine:
-  max_workers_per_node: 8  # Adjust based on CPU capacity (1 worker per 2 CPU cores)
-  provider:
-    init_blocks: 2          # Start with 2 blocks (more parallelism)
-    max_blocks: 4           # Increase upper limit for scalability
-    min_blocks: 1           # Ensure at least 1 block is always running
-    type: LocalProvider
-  type: GlobusComputeEngine
