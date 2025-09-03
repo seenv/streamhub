@@ -1,18 +1,18 @@
 # StreamHub
 
-StreamHub is an orchestrated, secure, and high-performance framework for configuring and running streaming endpoints. It integrates automated system setup (via Ansible) with a Python control layer to launch and manage data streams. StreamHub is designed for distributed, high-throughput scientific applications where reproducibility, security, and efficiency are essential.
-
+StreamHub is a secure, end-to-end scientific data streaming platform that leverages the high-performance data streaming capabilities of SciStream, the remote function execution capabilities of Globus Compute, and the secure authentication and authorization fabric of Globus Auth. The architecture of StreamHub extends SciStream by introducing a secure, federated control layer that simplifies the initiation and management of real-time scientific data streams.
 ---
 
-## ✨ Features
+##  Features
 
 ### Endpoint Orchestration
 - Automated installation and configuration of dependencies (Docker, Python, firewalls, sysctl tuning).
 - Secure tunneling with support for **Stunnel** and **HAProxy**.
 
-### Research Integration
+### Integration
 - Deploys and configures [SciStream](https://github.com/scistream/scistream-proto) on endpoints.
-- Supports **Globus Compute** endpoints for federated orchestration.
+- Uses **Globus Auth** for the authentication.
+- Creates **Globus Compute** user endpoints gateway nodes.
 
 ---
 
@@ -21,14 +21,13 @@ StreamHub is an orchestrated, secure, and high-performance framework for configu
 ### System Requirements
 - Ubuntu 22.04 or later
 - Python 3.9+
-- SSH access to endpoints
 - At least 4 GB memory and 10 GB disk space
 
 ### Installed Automatically
 - Ansible
 - Docker & Docker Compose
-- Python venv and scientific libraries
-- Stunnel, HAProxy, Nginx, iPerf3, tshark
+- Python venv and required libraries
+- Stunnel, HAProxy, iPerf3, tshark, etc. (for the full list check the [ansible tasks](https://github.com/seenv/streamhub/tree/d2406a5601765d0b0ba4605f53240a029e97c30b/setup/tasks))
 
 ---
 
