@@ -29,25 +29,33 @@ def main():
     ctl = StreamController(args)
     _install_signal_cleanup(ctl)
 
-    # 1) Markers inside the real SciStream PID dir (e.g., ~/.scistream)
+    #  If cleanup is set, cleanup the previous session
+    if args.cleanup:
+        pre = ctl.preclean_previous_session()
+        logging.info("Pre-clean (previous session): %s", pre)
+        if any(not r.get("ok") for r in pre.values()):
+            logging.error("Pre-clean failed: %s", pre)
+            sys.exit(2)
+
+    # Markers inside the real SciStream PID dir (/tmp/.scistream/{sess})
     mark = ctl.create_remote_markers()
     if any(not r.get("ok") for r in mark.values()):
         logging.error("Failed to create session markers: %s", mark)
         sys.exit(2)
     
-    # 2) Crypto: keygen on both ends + cross-trust
+    # Crypto: keygen on both ends + cross-trust
     crypto = ctl.setup_crypto()
     if any(not r.get("ok") for r in crypto.values()):
         logging.error("Crypto setup failed: %s", crypto)
         sys.exit(2)
 
-    # 3) Optional PSK distribution
+    # PSK distribution
     psk = ctl.distribute_psk()
     if any(not r.get("ok") for r in psk.values()):
         logging.error("PSK distribution failed: %s", psk)
         sys.exit(2)
 
-    # 4) Launch p2cs and c2cs
+    # Launch p2cs and c2cs
     r1 = ctl.launch_p2cs()
     r2 = ctl.launch_c2cs()
     if not r1.get("ok") or not r2.get("ok"):
@@ -56,7 +64,7 @@ def main():
         logging.info("Cleanup after launch failure: %s", res)
         sys.exit(3)
 
-    # 5) Connect: inbound → parse UID/ports → outbound
+    # Connect: inbound → parse UID/ports → outbound
     conn = ctl.connect()
     if any(not v.get("ok") for v in conn.values()):
         logging.error("Connect failed: %s", conn)
@@ -64,13 +72,6 @@ def main():
         logging.info("Cleanup after connect failure: %s", res)
         sys.exit(4)
 
-    # 6) Finish. Unless user opted out, clean up what this session started.
-    if args.no_cleanup:
-        logging.info("Started successfully; skipping cleanup due to --no-cleanup")
-        return
-
-    res = ctl.cleanup()
-    logging.info("Cleanup: %s", res)
 
 
 if __name__ == "__main__":

@@ -140,12 +140,10 @@ class StreamController:
         # which in {"inbound","outbound"}
         return self.endpoints[which]
 
-
-
     def sanity_check(self):
         for role, ep in [("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)]:
             uuid = self._eid(ep)
-            r = run_remote(uuid, f"TEST:{role}", 'echo "hello world"')
+            r = run_remote(uuid, f"TEST:{role}", 'echo "hello"')
             out = (r.get("stdout") or "").strip()
             print(f"[{role}] endpoint {ep} ({uuid}) responded: {out}")
 
@@ -166,6 +164,31 @@ class StreamController:
             results[role] = r
             if not r.get("ok"):
                 logging.error("Failed to create marker on %s (%s): %s", role, ep_name, r)
+        return results
+    
+    def _find_latest_marker_name(self, endpoint_id: str) -> str | None:
+        # Return basename of newest .session-*.mark in pid_dir, or None
+        script = f'ls -1t "{self.pid_dir}"/.session-*.mark 2>/dev/null | head -n1 || true'
+        r = run_remote(endpoint_id, "MARKER:find_latest", script)
+        if not r.get("ok"):
+            return None
+        path = (r.get("stdout") or "").strip()
+        if not path:
+            return None
+        import os
+        return os.path.basename(path)
+
+    def preclean_previous_session(self) -> dict:
+        """Kill anything started after the latest prior marker on both gateways"""
+        results = {}
+        for role, ep_name in (("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)):
+            eid = self._eid(ep_name)
+            latest = self._find_latest_marker_name(eid)
+            if not latest:
+                results[role] = {"ok": True, "skipped": True, "reason": "no prior marker"}
+                continue
+            r = stop_since_marker(role, eid, pid_dir=self.pid_dir, marker=latest)
+            results[role] = r
         return results
 
     # ------------------------------ Crypto --------------------------------------
@@ -257,12 +280,12 @@ PY
     # ------------------------------- Connect (s2uc) -----------------------------
 
     def connect(self) -> Dict[str, dict]:
-        # 1) Wait for producer gateway port
+        # Wait for producer gateway port
         wp = self._wait_port(self._eid(self.args.p2cs_ep), self.args.p2cs_ip, int(self.args.sync_port), timeout_s=60)
         if not wp.get("ok") or "READY" not in (wp.get("stdout") or ""):
             return {"inbound": {"ok": False, "error": f"s2cs not listening at {self.args.p2cs_ip}:{self.args.sync_port}", "wait": wp}}
 
-        # 2) Stage producer cert ON INBOUND RUNNER exactly where setup.inbound reads it
+        # Stage producer cert ON INBOUND RUNNER exactly where setup.inbound reads it
         if not self.p2cs_cert_pem:
             return {"inbound": {"ok": False, "error": "Missing producer cert PEM"}}
         inbound_runner = self._runner_eid("inbound")
@@ -271,7 +294,7 @@ PY
         if not sr.get("ok"):
             return {"inbound": sr}
 
-        # 3) Run inbound
+        # Run inbound
         r_in = setup_mod.inbound(self.args, "producer", inbound_runner, sess_dir=self.sess_dir)
         if not r_in.get("ok"):
             logging.error("Inbound failed: %s", r_in)
@@ -280,12 +303,12 @@ PY
         uid = r_in.get("uid")
         listen_ports = r_in.get("listen_ports") or []
 
-        # 4) Wait for consumer gateway port
+        # Wait for consumer gateway port
         wc = self._wait_port(self._eid(self.args.c2cs_ep), self.args.c2cs_ip, int(self.args.sync_port), timeout_s=60)
         if not wc.get("ok") or "READY" not in (wc.get("stdout") or ""):
             return {"inbound": r_in, "outbound": {"ok": False, "error": f"s2cs not listening at {self.args.c2cs_ip}:{self.args.sync_port}", "wait": wc}}
 
-        # 5) Stage consumer cert ON OUTBOUND RUNNER exactly where setup.outbound reads it
+        # Stage consumer cert ON OUTBOUND RUNNER exactly where setup.outbound reads it
         if not self.c2cs_cert_pem:
             return {"inbound": r_in, "outbound": {"ok": False, "error": "Missing consumer cert PEM"}}
         outbound_runner = self._runner_eid("outbound")
@@ -294,7 +317,7 @@ PY
         if not sr2.get("ok"):
             return {"inbound": r_in, "outbound": sr2}
 
-        # 6) Run outbound
+        # Run outbound
         r_out = setup_mod.outbound(self.args, "consumer", outbound_runner, stream_uid=uid, ports=listen_ports, sess_dir=self.sess_dir)
         if not r_out.get("ok"):
             logging.error("Outbound failed: %s", r_out)

@@ -48,7 +48,7 @@ def get_args() -> argparse.Namespace:
     g_paths.add_argument("--pid-dir", default="/tmp/.scistream", help="Where SciStream writes .pid files")
 
     g_flags = p.add_argument_group("Flags")
-    g_flags.add_argument("--no-cleanup", action="store_true", help="Skip cleanup at the end")
+    g_flags.add_argument("--cleanup", action="store_true", default=1, help="Cleanup the connections from the previous session (if any) before starting a new one")
     g_flags.add_argument("-v", "--verbose", action="store_true")
 
     """
