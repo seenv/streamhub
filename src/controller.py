@@ -4,44 +4,43 @@ from typing import Dict
 
 from globus_compute_sdk import Client
 
-from util import make_session_id, session_dir, run_remote, test_endpoint, stop_since_marker
+# Local utilities: process/session helpers and crypto distribution
+from util import make_session_id, session_dir, run_remote, test_endpoint
 from util import key_gen, crt_dist, key_dist
 import launcher as setup_mod
 
 
 def _normalize(s: str) -> str:
+    """Normalize endpoints's name to a lookup key: lowercase, strip, remove non-alphanum"""
     return re.sub(r"[^a-z0-9]+", "", (s or "").strip().lower())
 
 
 class StreamController:
     """
-    Orchestrates one session:
-      - Resolve & probe endpoints:
-          p2cs (producer gateway), c2cs (consumer gateway),
-          inbound runner (s2uc inbound), outbound runner (s2uc outbound)
-      - Create session marker in real SciStream PID dir (e.g., ~/.scistream)
-      - key_gen on gateways, cross-trust certs, optional PSK
-      - Launch s2cs on both gateways
-      - Wait for gateway sync ports; stage proper certs on runners
-      - Run s2uc inbound on inbound runner; parse stream UID/ports
-      - Run s2uc outbound on outbound runner
-      - Cleanup only processes newer than the per-session marker
+    One end-to-end session orchestrator
+
+    - Resolve + probe all required endpoints (producer, consumer, inbound runner, outbound runner)
+    - Create a per-session marker file (for targeted cleanup)
+    - Generate TLS certs on gateways and cross-distribute peer cert trust; optional PSK
+    - Launch s2cs on both gateways; wait for sync ports to be reachable
+    - Run s2uc inbound (parse UID + listen ports), then run s2uc outbound
+    - Provide utilities for pre-cleaning and post-session cleanup
     """
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.client = Client()
 
-        # Resolve and probe four roles
+        # Discover and sanity-check all endpoints
         self.endpoints = self._resolve_and_probe_endpoints()
 
-        # Directories and session identifiers
+        # Create unique session paths/ids and marker naming
         self.session_id = make_session_id()
         self.sess_dir = session_dir(getattr(args, "session_base", None), self.session_id)
         self.pid_dir = os.path.expanduser(getattr(args, "pid_dir", "/tmp/.scistream"))
         self.marker_name = f".session-{self.session_id}.mark"
 
-        # Cert PEMs produced by key_gen() on gateways (filled in setup_crypto)
+        # Certs produced during setup_crypto(); kept in memory for staging on runners
         self.p2cs_cert_pem: str | None = None
         self.c2cs_cert_pem: str | None = None
 
@@ -51,6 +50,11 @@ class StreamController:
     # ----------------------- Endpoint Resolution & Probing -----------------------
 
     def _resolve_and_probe_endpoints(self) -> Dict[str, str]:
+        """
+        Resolve 4 roles to concrete endpoint IDs, then actively probe each
+        Gateways ('p2cs','c2cs') are stored under their *names* (lowercased),
+        runners are stored under fixed keys ('inbound','outbound')
+        """
         roles = {
             "p2cs": (self.args.p2cs_ep, getattr(self.args, "p2cs_id", "")),
             "c2cs": (self.args.c2cs_ep, getattr(self.args, "c2cs_id", "")),
@@ -58,13 +62,17 @@ class StreamController:
             "outbound": (self.args.outbound_ep, getattr(self.args, "outbound_id", "")),
         }
 
+        # Visible endpoints for the current identity
         visible = list(self.client.get_endpoints())
         name_to_id = self._build_name_index(visible)
 
         resolved: Dict[str, str] = {}
         for role, (name, eid_arg) in roles.items():
+            # Resolve name/ID with tolerant matching, then verify it runs a command
             eid = self._resolve_single(role, name, eid_arg, name_to_id, visible)
             self._probe_or_raise(role, name, eid)
+
+            # Store gateways under their names, runners under fixed keys
             if role in ("p2cs", "c2cs"):
                 resolved[name.lower()] = eid
             else:
@@ -73,6 +81,7 @@ class StreamController:
 
     @staticmethod
     def _build_name_index(visible: list[dict]) -> dict[str, str]:
+        """Build {normalized_name: endpoint_id} for quick exact/prefix/substring lookup"""
         idx: dict[str, str] = {}
         for e in visible:
             nm = (e.get("name") or "").strip()
@@ -89,6 +98,14 @@ class StreamController:
         name_index: dict[str, str],
         visible: list[dict],
     ) -> str:
+        """
+        Resolve an endpoint in priority order:
+        1) explicit ID provided
+        2) exact normalized name
+        3) prefix match
+        4) substring match
+        Otherwise, raise with a helpful listing
+        """
         if wanted_id:
             logging.info("[%s] Using explicit endpoint ID for %s: %s", role, wanted_name, wanted_id)
             return wanted_id
@@ -98,15 +115,18 @@ class StreamController:
             eid = name_index[norm]
             logging.info("[%s] Resolved by exact name match: %s -> %s", role, wanted_name, eid)
             return eid
+
         for k, eid in name_index.items():
             if k.startswith(norm):
                 logging.info("[%s] Resolved by prefix match: %s -> %s", role, wanted_name, eid)
                 return eid
+
         for k, eid in name_index.items():
             if norm in k:
                 logging.info("[%s] Resolved by substring match: %s -> %s", role, wanted_name, eid)
                 return eid
 
+        # Nothing matched—show user what *is* visible and how to force with --{role}-id
         seen = "\n".join(
             f"- {(e.get('name') or '').strip()}  [{e.get('id') or e.get('uuid')}]"
             for e in visible
@@ -120,6 +140,10 @@ class StreamController:
 
     @staticmethod
     def _probe_or_raise(role: str, name_label: str, endpoint_id: str) -> None:
+        """
+        Submit a trivial command to verify the endpoint can execute; fail early if not
+        This catches wrong IDs, permission issues, unreachable endpoints, etc.
+        """
         r = run_remote(endpoint_id, f"PROBE:{role}", "echo OK", wall=20, wait=20)
         if not r.get("ok"):
             raise RuntimeError(
@@ -134,13 +158,15 @@ class StreamController:
         logging.info("[%s] Probe succeeded: %s (%s)", role, name_label, endpoint_id)
 
     def _eid(self, ep_name: str) -> str:
+        """Lookup resolved endpoint ID by gateway name (lowercased)"""
         return self.endpoints[ep_name.lower()]
 
     def _runner_eid(self, which: str) -> str:
-        # which in {"inbound","outbound"}
+        """Lookup runner endpoint ID by fixed key: 'inbound' or 'outbound'"""
         return self.endpoints[which]
 
     def sanity_check(self):
+        """Quick smoke test on the two gateways, ensure remote exec path works"""
         for role, ep in [("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)]:
             uuid = self._eid(ep)
             r = run_remote(uuid, f"TEST:{role}", 'echo "hello"')
@@ -148,8 +174,14 @@ class StreamController:
             print(f"[{role}] endpoint {ep} ({uuid}) responded: {out}")
 
     # ----------------------- Port Availability Check -----------------------------
-    
+
     def _check_remote_ports_free(self, endpoint_id: str, ports: list[int], label: str) -> dict:
+        """
+        On an endpoint, attempt to bind each port on 0.0.0.0 (wildcard)
+        Any bind failure marks the port as BUSY
+        Prints 'OK' or 'BUSY:x,y,...'
+        """
+        #TODO: if the ports are busy, ignore the ports, run the s2cs and get the new ports
         port_list = ",".join(str(int(p)) for p in ports)
         script = f"""
 python3 - <<'PY'
@@ -176,6 +208,10 @@ PY
         return run_remote(endpoint_id, f"PORTS:check:{label}", script)
 
     def verify_requested_ports_available(self) -> None:
+        """
+        Fail fast if any requested outbound ports appear busy on either gateway
+        (Adjust here if inbound/outbound ports should be checked on different runners)
+        """
         for role, ep_name in (("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)):
             ports = getattr(self.args, "outbound_dst_ports", []) or []
             if ports:
@@ -188,8 +224,12 @@ PY
     # ------------------------------ Markers -------------------------------------
 
     def create_remote_markers(self) -> Dict[str, dict]:
+        """
+        Create per-session marker files on both gateways (in real PID dir)
+        These markers bound the set of PIDs we consider "owned by this session"
+        """
         test_endpoint(self._eid(self.args.p2cs_ep))
-        test_endpoint(self._eid(self.args.c2cs_ep)) 
+        test_endpoint(self._eid(self.args.c2cs_ep))
         results: Dict[str, dict] = {}
         for ep_name, role in ((self.args.p2cs_ep, "producer"), (self.args.c2cs_ep, "consumer")):
             uuid = self._eid(ep_name)
@@ -203,9 +243,9 @@ PY
             if not r.get("ok"):
                 logging.error("Failed to create marker on %s (%s): %s", role, ep_name, r)
         return results
-    
+
     def _find_latest_marker_name(self, endpoint_id: str) -> str | None:
-        # Return basename of newest .session-*.mark in pid_dir, or None
+        """Return basename of newest .session-*.mark in pid_dir on the remote host, or None"""
         script = f'ls -1t "{self.pid_dir}"/.session-*.mark 2>/dev/null | head -n1 || true'
         r = run_remote(endpoint_id, "MARKER:find_latest", script)
         if not r.get("ok"):
@@ -215,9 +255,56 @@ PY
             return None
         import os
         return os.path.basename(path)
+    
+    @staticmethod
+    def stop_since_marker(endpoint_name: str, uuid: str, *, pid_dir: str, marker: str, timeout_s: int = 5) -> dict:
+        """
+        Kill processes tracked by *.pid files that are NEWER than a given marker file.
+        - Soft kill, wait up to timeout_s, then hard kill survivors
+        - Only affects PIDs whose .pid files are newer than pid_dir/marker
+        """
+        script = f"""
+                set -e
+                m="{pid_dir}/{marker}"
+                [ -f "$m" ] || touch "$m"
+                if compgen -G "{pid_dir}/*.pid" > /dev/null; then
+                for f in {pid_dir}/*.pid; do
+                    [ -f "$f" ] || continue
+                    if [ "$f" -nt "$m" ]; then
+                    pid="$(cat "$f" || true)"
+                    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill "$pid" || true; fi
+                    fi
+                done
+                end=$(( $(date +%s) + {timeout_s} ))
+                while [ $(date +%s) -lt $end ]; do
+                    alive=0
+                    for f in {pid_dir}/*.pid; do
+                    [ -f "$f" ] || continue
+                    if [ "$f" -nt "$m" ]; then
+                        pid="$(cat "$f" || true)"
+                        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then alive=1; fi
+                    fi
+                    done
+                    [ $alive -eq 0 ] && break
+                    sleep 1
+                done
+                for f in {pid_dir}/*.pid; do
+                    [ -f "$f" ] || continue
+                    if [ "$f" -nt "$m" ]; then
+                    pid="$(cat "$f" || true)"
+                    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" || true; fi
+                    fi
+                done
+                fi
+                echo "OK"
+                """
+        return run_remote(uuid, f"KILL:{endpoint_name}", script)
 
     def preclean_previous_session(self) -> dict:
-        """Kill anything started after the latest prior marker on both gateways"""
+        """
+        For each gateway, if a previous marker exists
+        kill any tracked processes newer than that marker
+        """
         results = {}
         for role, ep_name in (("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)):
             eid = self._eid(ep_name)
@@ -225,11 +312,14 @@ PY
             if not latest:
                 results[role] = {"ok": True, "skipped": True, "reason": "no prior marker"}
                 continue
-            r = stop_since_marker(role, eid, pid_dir=self.pid_dir, marker=latest)
+            r = self.stop_since_marker(role, eid, pid_dir=self.pid_dir, marker=latest)
             results[role] = r
         return results
 
     def deep_clean_previous_session(self) -> dict:
+        """
+        Kill any PID referenced by *.pid under the base dir
+        """
         results = {}
         for role, ep_name in (("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)):
             eid = self._eid(ep_name)
@@ -238,14 +328,20 @@ PY
                         for f in $PID_BASE/*.pid; do pid=$(cat $f || : ) && [[ "$pid"  =~ ^[0-9]+$ ]] && kill -9 "$pid" 2>/dev/null || : ; done
                         echo OK
                     """
-            results[role] = run_remote(eid, f"PRECLEAN:{role}", script) 
+            results[role] = run_remote(eid, f"PRECLEAN:{role}", script)
         return results
-        
+
     # ------------------------------ Crypto --------------------------------------
 
     def setup_crypto(self) -> Dict[str, dict]:
-        ep1 = self.args.p2cs_ep  # producer gateway (thats)
-        ep2 = self.args.c2cs_ep  # consumer gateway (neat)
+        """
+        Generate self-signed certs on both gateways, then cross-distribute peer certs
+        so each trusts the other. Store PEMs locally for staging onto runners
+        """
+        #TODO: check with actual data and make sure selfsigned certs work
+        #TODO: should modify the proxy temp config giles when using opposite direction!
+        ep1 = self.args.p2cs_ep
+        ep2 = self.args.c2cs_ep
 
         r1 = key_gen(self.args, "p2cs", self._eid(ep1), sess_dir=self.sess_dir)
         if not r1.get("ok"):
@@ -259,6 +355,7 @@ PY
             return {"p2cs": r1, "c2cs": r2}
         self.c2cs_cert_pem = r2.get("cert_pem")
 
+        # Copy each side's cert to the other's trust path
         t1 = crt_dist(self.args, "p2cs", self._eid(ep1), sess_dir=self.sess_dir, peer_cert_pem=self.c2cs_cert_pem or "")
         t2 = crt_dist(self.args, "c2cs", self._eid(ep2), sess_dir=self.sess_dir, peer_cert_pem=self.p2cs_cert_pem or "")
         if not t1.get("ok"):
@@ -268,6 +365,7 @@ PY
         return {"p2cs": t1, "c2cs": t2}
 
     def distribute_psk(self) -> Dict[str, dict]:
+        """distribute a pre-shared key file to both gateways"""
         secret = (self.args.psk_secret or "").strip()
         if not secret:
             return {"p2cs": {"ok": True, "skipped": True}, "c2cs": {"ok": True, "skipped": True}}
@@ -278,12 +376,14 @@ PY
     # --------------------------- Server Launch (s2cs) ---------------------------
 
     def launch_p2cs(self) -> dict:
+        """Start the producer-side gateway service (s2cs) on its endpoint"""
         r = setup_mod.p2cs(self.args, self._eid(self.args.p2cs_ep), sess_dir=self.sess_dir)
         if not r.get("ok"):
             logging.error("Launch p2cs failed: %s", r)
         return r
 
     def launch_c2cs(self) -> dict:
+        """Start the consumer-side gateway service (s2cs) on its endpoint"""
         r = setup_mod.c2cs(self.args, self._eid(self.args.c2cs_ep), sess_dir=self.sess_dir)
         if not r.get("ok"):
             logging.error("Launch c2cs failed: %s", r)
@@ -292,6 +392,10 @@ PY
     # ----------------------------- Helpers for connect --------------------------
 
     def _stage_cert_pem_on(self, endpoint_id: str, pem: str, dest_path: str = "/tmp/.scistream/server.crt") -> dict:
+        """
+        Write a PEM string to a remote path via base64 heredoc
+        Used to place gateway certs where runner-side s2uc expects them
+        """
         b64 = base64.b64encode((pem or "").encode("utf-8")).decode("ascii")
         script = f"""python3 - <<'PY'
 import base64, os
@@ -304,9 +408,14 @@ print("OK")
 PY
 """
         return run_remote(endpoint_id, "CERT:stage", script)
-    
+
     def _wait_port(self, endpoint_id: str, host: str, port: int, timeout_s: int = 60) -> dict:
-        # Pass host/port via environment to avoid quoting/repr issues on remote.
+        """
+        Poll until TCP connect (host:port) succeeds or timeout
+        To make sure s2cs listener is up on the gateway before proceeding to runner side
+        """
+        #TODO: change the shell format python codes to python function and submit the function
+        # Pass host/port via environment to avoid quoting/repr issues on remote
         script = f"""H={host} P={int(port)} T={int(timeout_s)} python3 - <<'PY'
 import os, socket, sys, time
 h = os.environ["H"]
@@ -330,6 +439,14 @@ PY
     # ------------------------------- Connect (s2uc) -----------------------------
 
     def connect(self) -> Dict[str, dict]:
+        """
+        Full connection path:
+        - Wait until producer gateway sync port is reachable
+        - Stage producer cert on inbound runner; run inbound-request, parse UID/ports
+        - Wait until consumer gateway sync port is reachable
+        - Stage consumer cert on outbound runner; run outbound-request using UID/ports
+        Returns a dict with 'inbound' and 'outbound' results
+        """
         # Wait for producer gateway port
         wp = self._wait_port(self._eid(self.args.p2cs_ep), self.args.p2cs_ip, int(self.args.sync_port), timeout_s=60)
         if not wp.get("ok") or "READY" not in (wp.get("stdout") or ""):
@@ -344,12 +461,11 @@ PY
         if not sr.get("ok"):
             return {"inbound": sr}
 
-        # Run inbound
+        # Run inbound and extract stream UID + listen ports from logs
         r_in = setup_mod.inbound(self.args, "producer", inbound_runner, sess_dir=self.sess_dir)
         if not r_in.get("ok"):
             logging.error("Inbound failed: %s", r_in)
             return {"inbound": r_in}
-
         uid = r_in.get("uid")
         listen_ports = r_in.get("listen_ports") or []
 
@@ -358,7 +474,7 @@ PY
         if not wc.get("ok") or "READY" not in (wc.get("stdout") or ""):
             return {"inbound": r_in, "outbound": {"ok": False, "error": f"s2cs not listening at {self.args.c2cs_ip}:{self.args.sync_port}", "wait": wc}}
 
-        # Stage consumer cert ON OUTBOUND RUNNER exactly where setup.outbound reads it
+        # Stage consumer cert ON OUTBOUND RUNNER where setup.outbound expects it
         if not self.c2cs_cert_pem:
             return {"inbound": r_in, "outbound": {"ok": False, "error": "Missing consumer cert PEM"}}
         outbound_runner = self._runner_eid("outbound")
@@ -367,7 +483,7 @@ PY
         if not sr2.get("ok"):
             return {"inbound": r_in, "outbound": sr2}
 
-        # Run outbound
+        # Run outbound using parsed UID and inbound listen ports
         r_out = setup_mod.outbound(self.args, "consumer", outbound_runner, stream_uid=uid, ports=listen_ports, sess_dir=self.sess_dir)
         if not r_out.get("ok"):
             logging.error("Outbound failed: %s", r_out)
@@ -376,10 +492,11 @@ PY
     # -------------------------------- Cleanup -----------------------------------
 
     def cleanup(self) -> Dict[str, dict]:
+        """
+        Enabling post-session cleanup, prefer calling stop_since_marker
+        with this session's marker so you only kill processes started by *this* run
+        """
         pass
-        # Only kill what is newer than the marker on gateways (where s2cs writes pids)
-        #p = stop_since_marker("p2cs", self._eid(self.args.p2cs_ep), pid_dir=self.pid_dir, marker=self.marker_name)
-        #c = stop_since_marker("c2cs", self._eid(self.args.c2cs_ep), pid_dir=self.pid_dir, marker=self.marker_name)
-        #return {"p2cs": p, "c2cs": c}
-        
-
+        # p = stop_since_marker("p2cs", self._eid(self.args.p2cs_ep), pid_dir=self.pid_dir, marker=self.marker_name)
+        # c = stop_since_marker("c2cs", self._eid(self.args.c2cs_ep), pid_dir=self.pid_dir, marker=self.marker_name)
+        # return {"p2cs": p, "c2cs": c}

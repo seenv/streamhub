@@ -8,6 +8,12 @@ from controller import StreamController
 
 
 def _install_signal_cleanup(ctl: StreamController):
+    """
+    Install SIGINT/SIGTERM handlers that:
+    - attempt controller.cleanup()
+    - then exit with status 1
+    Ensures stray processes are killed when the user Ctrl-C's
+    """
     def handler(sig, frame):
         logging.warning("Received signal %s; running cleanup...", sig)
         try:
@@ -41,7 +47,7 @@ def main():
             sys.exit(2)
     
     #  Cleanup all the proxies
-    if args.deep_clean:
+    if not args.no_deep_clean:
         deep = ctl.deep_clean_previous_session()
         logging.info("Deep-clean: %s", deep)
         if any(not r.get("ok") for r in deep.values()):

@@ -6,20 +6,30 @@ from globus_compute_sdk import Executor, ShellFunction
 DEFAULT_BASE = "/tmp/.scistream"
 
 def test_endpoint(uuid: str):
-    r = run_remote(uuid, "HELLO", 'echo "hello world"')
+    """
+    Submits 'echo "hello"' to the endpoint
+    Useful as a fast, explicit connectivity check during debugging
+    """
+    r = run_remote(uuid, "HELLO", 'echo "hello"')
     print(f"Test result for {uuid}: {r}")
     return r
 
 def make_session_id() -> str:
+    """Generate a sortable unique session id: YYYYMMDD-HHMMSS-<8hex>"""
     ts = time.strftime("%Y%m%d-%H%M%S")
     short = uuid.uuid4().hex[:8]
     return f"{ts}-{short}"
 
 def session_dir(base: Optional[str], session_id: str) -> str:
+    """Join base directory (or default) with session_id, without double slashes"""
     b = base or DEFAULT_BASE
     return f"{b.rstrip('/')}/{session_id}"
 
 def _export_env(env: Dict[str, str]) -> str:
+    """
+    Produce a block of 'export KEY=VALUE' lines with proper shell-quoting
+    for inclusion at the top of the remote script
+    """
     if not env:
         return ""
     parts = []
@@ -28,12 +38,20 @@ def _export_env(env: Dict[str, str]) -> str:
     return "\n".join(parts)
 
 def run_remote_debug(uuid: str, label: str, script: str, **kwargs):
+    """Wrapper around run_remote that prints the exact script being submitted"""
     print(f"\n[DEBUG] Submitting to endpoint {uuid} ({label}):\n{script}\n{'-'*60}")
     return run_remote(uuid, label, script, **kwargs)
 
 def run_remote(uuid_str: str, label: str, script_body: str, *,
                env: Optional[Dict[str, str]] = None,
                wall: int = 180, wait: int = 180) -> dict:
+    """
+    Submit a shell script to a Globus Compute endpoint and wait for results
+    - Wraps the payload in 'bash -lc' for a login shell environment
+    - Enables 'set -euo pipefail' for safer shell behavior
+    - Allows passing environment variables via 'env' (exported before script)
+    Returns a dict with ok/label/stdout/stderr or ok=False on exception
+    """
     env_block = _export_env(env or {})
     cmd = f"""bash -lc '
           set -euo pipefail
@@ -54,45 +72,11 @@ def run_remote(uuid_str: str, label: str, script_body: str, *,
             logging.exception("%s failed", label)
             return {"ok": False, "label": label, "error": str(e)}
 
-def stop_since_marker(endpoint_name: str, uuid: str, *, pid_dir: str, marker: str, timeout_s: int = 5) -> dict:
-    script = f"""
-        set -e
-        m="{pid_dir}/{marker}"
-        [ -f "$m" ] || touch "$m"
-        if compgen -G "{pid_dir}/*.pid" > /dev/null; then
-          for f in {pid_dir}/*.pid; do
-            [ -f "$f" ] || continue
-            if [ "$f" -nt "$m" ]; then
-              pid="$(cat "$f" || true)"
-              if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill "$pid" || true; fi
-            fi
-          done
-          end=$(( $(date +%s) + {timeout_s} ))
-          while [ $(date +%s) -lt $end ]; do
-            alive=0
-            for f in {pid_dir}/*.pid; do
-              [ -f "$f" ] || continue
-              if [ "$f" -nt "$m" ]; then
-                pid="$(cat "$f" || true)"
-                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then alive=1; fi
-              fi
-            done
-            [ $alive -eq 0 ] && break
-            sleep 1
-          done
-          for f in {pid_dir}/*.pid; do
-            [ -f "$f" ] || continue
-            if [ "$f" -nt "$m" ]; then
-              pid="$(cat "$f" || true)"
-              if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" || true; fi
-            fi
-          done
-        fi
-        echo "OK"
-        """
-    return run_remote(uuid, f"KILL:{endpoint_name}", script)
-
 def key_gen(args, endpoint_name: str, uuid: str, *, sess_dir: str) -> dict:
+    """
+    Generate a self-signed cert/key pair remotely via openssl and return the cert PEM
+    CN is chosen based on which side we're on (producer/consumer)
+    """
     cn = args.p2cs_listener if endpoint_name.lower() == "thats" else args.c2cs_listener
     script = f"""
                 mkdir -p "{sess_dir}/certs"
@@ -112,6 +96,10 @@ def key_gen(args, endpoint_name: str, uuid: str, *, sess_dir: str) -> dict:
     return {"ok": True, "label": r.get("label"), "cert_pem": pem}
 
 def crt_dist(args, endpoint_name: str, uuid: str, *, sess_dir: str, peer_cert_pem: str) -> dict:
+    """
+    Write the other gateway cert PEM into sess_dir/certs/peer.crt on the remote host
+    No need but added a python heredoc to safely base64-decode the payload
+    """
     b64 = base64.b64encode(peer_cert_pem.encode("utf-8")).decode("ascii")
     script = f"""
 mkdir -p "{sess_dir}/certs"
@@ -126,6 +114,10 @@ PY
     return run_remote(uuid, f"CRT-DIST:{endpoint_name}", script)
 
 def key_dist(args, endpoint_name: str, uuid: str, *, sess_dir: str, psk_secret: str | None=None) -> dict:
+    """
+    Write a PSK file into sess_dir/certs/psk.secrets
+    If no secret is provided, returns ok=True with 'skipped'
+    """
     if not psk_secret:
         return {"ok": True, "label": f"KEY-DIST:{endpoint_name}", "skipped": True}
     b64 = base64.b64encode(psk_secret.encode("utf-8")).decode("ascii")

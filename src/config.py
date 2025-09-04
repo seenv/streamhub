@@ -43,7 +43,7 @@ def get_args() -> argparse.Namespace:
 
     g_flags = p.add_argument_group("Flags")
     g_flags.add_argument("--cleanup", action="store_true", help="Cleanup the connections from the previous session (if any) before starting a new one")
-    g_flags.add_argument("--deep-clean", action='store_false', default=True, help="Cleanup all the connections from the previous session (if any) before starting a new one")
+    g_flags.add_argument("--no-deep-clean", action='store_true', default=False, help="Cleanup all the connections from the previous session (if any) before starting a new one")
     g_flags.add_argument("-v", "--verbose", action="store_true")
 
     args = p.parse_args()
