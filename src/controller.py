@@ -5,8 +5,8 @@ from typing import Dict
 from globus_compute_sdk import Client
 
 from util import make_session_id, session_dir, run_remote, test_endpoint, stop_since_marker
-from keygen import key_gen, crt_dist, key_dist
-import setup as setup_mod
+from util import key_gen, crt_dist, key_dist
+import launcher as setup_mod
 
 
 def _normalize(s: str) -> str:
@@ -147,6 +147,44 @@ class StreamController:
             out = (r.get("stdout") or "").strip()
             print(f"[{role}] endpoint {ep} ({uuid}) responded: {out}")
 
+    # ----------------------- Port Availability Check -----------------------------
+    
+    def _check_remote_ports_free(self, endpoint_id: str, ports: list[int], label: str) -> dict:
+        port_list = ",".join(str(int(p)) for p in ports)
+        script = f"""
+python3 - <<'PY'
+import socket, sys
+ip = "0.0.0.0"
+ports = [{port_list}]
+busy = []
+for p in ports:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((ip, p))   # if this fails, the port is taken or not bindable
+    except OSError:
+        busy.append(p)
+    finally:
+        try: s.close()
+        except: pass
+if busy:
+    print("BUSY:" + ",".join(map(str, busy)))
+    sys.exit(1)
+print("OK")
+PY
+"""
+        return run_remote(endpoint_id, f"PORTS:check:{label}", script)
+
+    def verify_requested_ports_available(self) -> None:
+        for role, ep_name in (("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)):
+            ports = getattr(self.args, "outbound_dst_ports", []) or []
+            if ports:
+                r = self._check_remote_ports_free(self._eid(ep_name), ports, role)
+                out = (r.get("stdout") or "").strip()
+                if (not r.get("ok")) or out.startswith("BUSY:"):
+                    busy = out.split("BUSY:", 1)[1] if "BUSY:" in out else "unknown"
+                    raise RuntimeError(f"Requested ports not free on {ep_name}: {busy}")
+
     # ------------------------------ Markers -------------------------------------
 
     def create_remote_markers(self) -> Dict[str, dict]:
@@ -191,6 +229,18 @@ class StreamController:
             results[role] = r
         return results
 
+    def deep_clean_previous_session(self) -> dict:
+        results = {}
+        for role, ep_name in (("p2cs", self.args.p2cs_ep), ("c2cs", self.args.c2cs_ep)):
+            eid = self._eid(ep_name)
+            script = f"""
+                        PID_BASE=/tmp/.scistream; shopt -s nullglob 
+                        for f in $PID_BASE/*.pid; do pid=$(cat $f || : ) && [[ "$pid"  =~ ^[0-9]+$ ]] && kill -9 "$pid" 2>/dev/null || : ; done
+                        echo OK
+                    """
+            results[role] = run_remote(eid, f"PRECLEAN:{role}", script) 
+        return results
+        
     # ------------------------------ Crypto --------------------------------------
 
     def setup_crypto(self) -> Dict[str, dict]:
@@ -240,8 +290,8 @@ class StreamController:
         return r
 
     # ----------------------------- Helpers for connect --------------------------
+
     def _stage_cert_pem_on(self, endpoint_id: str, pem: str, dest_path: str = "/tmp/.scistream/server.crt") -> dict:
-        import base64
         b64 = base64.b64encode((pem or "").encode("utf-8")).decode("ascii")
         script = f"""python3 - <<'PY'
 import base64, os

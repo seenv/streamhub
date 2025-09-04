@@ -23,26 +23,44 @@ def main():
     args = get_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s"
+        format="%(asctime)s %(levelname)s %(message)s",
+        #handlers=[
+        #    logging.FileHandler("streamhub.log"),
+        #]
     )
 
     ctl = StreamController(args)
     _install_signal_cleanup(ctl)
 
-    #  If cleanup is set, cleanup the previous session
+    #  Cleanup previous session's proxies
     if args.cleanup:
         pre = ctl.preclean_previous_session()
         logging.info("Pre-clean (previous session): %s", pre)
         if any(not r.get("ok") for r in pre.values()):
             logging.error("Pre-clean failed: %s", pre)
             sys.exit(2)
+    
+    #  Cleanup all the proxies
+    if args.deep_clean:
+        deep = ctl.deep_clean_previous_session()
+        logging.info("Deep-clean: %s", deep)
+        if any(not r.get("ok") for r in deep.values()):
+            logging.error("Deep-clean failed: %s", deep)
+            sys.exit(2)
+
+    # Fail if requested ports are busy
+    try:
+        ctl.verify_requested_ports_available()
+    except Exception as e:
+        logging.error("Port availability check failed: %s", e)
+        sys.exit(2)
 
     # Markers inside the real SciStream PID dir (/tmp/.scistream/{sess})
     mark = ctl.create_remote_markers()
     if any(not r.get("ok") for r in mark.values()):
         logging.error("Failed to create session markers: %s", mark)
         sys.exit(2)
-    
+
     # Crypto: keygen on both ends + cross-trust
     crypto = ctl.setup_crypto()
     if any(not r.get("ok") for r in crypto.values()):
@@ -71,7 +89,6 @@ def main():
         res = ctl.cleanup()
         logging.info("Cleanup after connect failure: %s", res)
         sys.exit(4)
-
 
 
 if __name__ == "__main__":
