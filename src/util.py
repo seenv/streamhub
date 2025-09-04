@@ -5,15 +5,6 @@ from globus_compute_sdk import Executor, ShellFunction
 
 DEFAULT_BASE = "/tmp/.scistream"
 
-def test_endpoint(uuid: str):
-    """
-    Submits 'echo "hello"' to the endpoint
-    Useful as a fast, explicit connectivity check during debugging
-    """
-    r = run_remote(uuid, "HELLO", 'echo "hello"')
-    print(f"Test result for {uuid}: {r}")
-    return r
-
 def make_session_id() -> str:
     """Generate a sortable unique session id: YYYYMMDD-HHMMSS-<8hex>"""
     ts = time.strftime("%Y%m%d-%H%M%S")
@@ -44,7 +35,8 @@ def run_remote_debug(uuid: str, label: str, script: str, **kwargs):
 
 def run_remote(uuid_str: str, label: str, script_body: str, *,
                env: Optional[Dict[str, str]] = None,
-               wall: int = 180, wait: int = 180) -> dict:
+               wall: int = 180, wait: int = 180,
+               login_shell: bool = False) -> dict:
     """
     Submit a shell script to a Globus Compute endpoint and wait for results
     - Wraps the payload in 'bash -lc' for a login shell environment
@@ -53,7 +45,8 @@ def run_remote(uuid_str: str, label: str, script_body: str, *,
     Returns a dict with ok/label/stdout/stderr or ok=False on exception
     """
     env_block = _export_env(env or {})
-    cmd = f"""bash -lc '
+    shell_flag = "-lc" if login_shell else "-c"
+    cmd = f"""bash {shell_flag} '
           set -euo pipefail
           {env_block}
           {script_body}

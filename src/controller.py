@@ -5,7 +5,7 @@ from typing import Dict
 from globus_compute_sdk import Client
 
 # Local utilities: process/session helpers and crypto distribution
-from util import make_session_id, session_dir, run_remote, test_endpoint
+from util import make_session_id, session_dir, run_remote
 from util import key_gen, crt_dist, key_dist
 import launcher as setup_mod
 
@@ -228,8 +228,6 @@ PY
         Create per-session marker files on both gateways (in real PID dir)
         These markers bound the set of PIDs we consider "owned by this session"
         """
-        test_endpoint(self._eid(self.args.p2cs_ep))
-        test_endpoint(self._eid(self.args.c2cs_ep))
         results: Dict[str, dict] = {}
         for ep_name, role in ((self.args.p2cs_ep, "producer"), (self.args.c2cs_ep, "consumer")):
             uuid = self._eid(ep_name)
