@@ -20,7 +20,7 @@
     - { name: 'net.ipv4.tcp_no_metrics_save', value: '1' }
     - { name: 'net.core.default_qdisc', value: 'fq' }
 
-  #also add the ring buffer size sudo ethtool -G eno1np0 tx 1024 rx 1024
+  #TODO: also add the ring buffer size sudo ethtool -G eno1np0 tx 1024 rx 1024
 
 - name: Apply fq discipline
   become: true

@@ -32,8 +32,7 @@
   become: true
   vars:
     sources:
-      - "ENDPOINT-IPV4"
-      - "ENDPOINT-IPV4"
+      - "ENDPOINT-IPV4"       # Make sure you open the ports for all of the nodes and gateways (Producer, Consumer, P2CS, C2CS)
     ports:
       - "5050-5150"
       - "5200-5300"

@@ -33,15 +33,11 @@
         hostname: "{{ hostname.stdout }}"
         venv: "{{ home.stdout }}/.venv"
 
-    - import_tasks: tasks/packages.yml      #fix the iftop: sudo setcap cap_net_raw,cap_net_admin=eip /usr/sbin/iftop
+    - import_tasks: tasks/packages.yml      #TODO: fix iftop: sudo setcap cap_net_raw,cap_net_admin=eip /usr/sbin/iftop
     - import_tasks: tasks/firewall.yml
     - import_tasks: tasks/docker.yml
-    - import_tasks: tasks/ssh.yml
-    - import_tasks: tasks/sshfs.yml
     - import_tasks: tasks/sysctl.yml
-    - import_tasks: tasks/bash.yml
     - import_tasks: tasks/tshark.yml
-    - import_tasks: tasks/nginx.yml
     - import_tasks: tasks/iperf.yml
     - import_tasks: tasks/python.yml
     - import_tasks: tasks/scistream.yml
