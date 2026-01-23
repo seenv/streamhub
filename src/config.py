@@ -31,7 +31,7 @@ def get_args() -> argparse.Namespace:
     g_net.add_argument("--outbound-dst-ports", type=_csv_ports, default="5050,5100,5101,5102,5103,5104,5105,5106,5107,5108,5109,5110")
 
     g_general = p.add_argument_group("General")
-    g_general.add_argument("--type", default="StunnelSubprocess", help="Type of proxy to use")
+    g_general.add_argument("--type", default="StunnelSubprocess", help="Type of proxy to use: StunnelSubprocess, HaproxySubprocess")
     g_general.add_argument("--sync-port", type=int, default=5000)
     g_general.add_argument("--rate", type=int, default=10_000)
     g_general.add_argument("--num-conn", type=int, default=11)
