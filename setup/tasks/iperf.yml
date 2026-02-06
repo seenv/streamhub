@@ -1,40 +1,131 @@
-- name: Create iperf directory
-  #become: true
-  file:
-    path: "{{ ansible_user_dir }}/iperf"
-    state: directory
-
-- name: Download libiperf0
-  #become: true
-  get_url:
-    url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/libiperf0_3.16-1build2_amd64.deb
-    dest: "{{ ansible_user_dir }}/iperf/libiperf0.deb"
-
-- name: Download libiperf-dev
-  #become: true
-  get_url:
-    url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/libiperf-dev_3.16-1build2_amd64.deb
-    dest: "{{ ansible_user_dir }}/iperf/libiperf-dev.deb"
-
-- name: Download iperf3
-  #become: true
-  get_url:
-    url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/iperf3_3.16-1build2_amd64.deb
-    dest: "{{ ansible_user_dir }}/iperf/iperf3.deb"
-
-- name: Install deb packages
+# ufw + services
+- name: Ensure ufw is installed
   become: true
-  apt:
-    deb: "{{ item }}"
+  package:
+    name: ufw
     state: present
-  loop:
-    - "{{ ansible_user_dir }}/iperf/libiperf0.deb"
-    - "{{ ansible_user_dir }}/iperf/libiperf-dev.deb"
-    - "{{ ansible_user_dir }}/iperf/iperf3.deb"
 
-- name: Remove iperf directory
-  #become: true
-  file:
-    path: "{{ ansible_user_dir }}/iperf"
-    state: absent
+- name: Ensure ufw is enabled
+  become: true
+  community.general.ufw:
+    state: enabled
+
+- name: Set default incoming policy (deny)
+  become: true
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Set default outgoing policy (allow)
+  become: true
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Allow SSH
+  become: true
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+# Load tcp_bbr kernel module
+- name: Load BBR congestion control module
+  become: true
+  community.general.modprobe:
+    name: tcp_bbr
+    state: present
+
+# Display available congestion control algorithms
+- name: Display available congestion control algorithms
+  become: true
+  command: cat /proc/sys/net/ipv4/tcp_available_congestion_control
+  register: congestion_control
+  changed_when: false
+
+- name: Show available TCP congestion controls
+  debug:
+    msg: "{{ congestion_control.stdout }}"
+
+# allow tcp from <source> to any port <port or range>
+- name: Add ufw rules for each source and port
+  become: true
+  vars:
+    sources:
+      - "ENDPOINT-IPV4"     # repeat for Producer/Consumer/P2CS/C2CS, etc.
+    ports:
+      - "5050:5150"
+      - "5200:5300"
+      - "5000"
+      - "6666:6669"
+  loop: "{{ sources | product(ports) | list }}"
+  loop_control:
+    label: "{{ item.0 }} → {{ item.1 }}"
+  community.general.ufw:
+    rule: allow
+    proto: tcp
+    from_ip: "{{ item.0 }}"
+    to_ip: any
+    port: "{{ item.1 }}"
+
+- name: Reload ufw (optional)
+  become: true
+  command: ufw reload
+  changed_when: false
+
+# List rules 
+- name: Show ufw status (numbered)
+  become: true
+  command: ufw status numbered
+  register: ufw_rules
+  changed_when: false
+
+- name: Show configured ufw rules
+  debug:
+    msg: "{{ ufw_rules.stdout_lines }}"
+
+
+
+
+
+# # Firewalld setup
+# - name: Create iperf directory
+#   #become: true
+#   file:
+#     path: "{{ ansible_user_dir }}/iperf"
+#     state: directory
+
+# - name: Download libiperf0
+#   #become: true
+#   get_url:
+#     url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/libiperf0_3.16-1build2_amd64.deb
+#     dest: "{{ ansible_user_dir }}/iperf/libiperf0.deb"
+
+# - name: Download libiperf-dev
+#   #become: true
+#   get_url:
+#     url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/libiperf-dev_3.16-1build2_amd64.deb
+#     dest: "{{ ansible_user_dir }}/iperf/libiperf-dev.deb"
+
+# - name: Download iperf3
+#   #become: true
+#   get_url:
+#     url: https://archive.ubuntu.com/ubuntu/pool/universe/i/iperf3/iperf3_3.16-1build2_amd64.deb
+#     dest: "{{ ansible_user_dir }}/iperf/iperf3.deb"
+
+# - name: Install deb packages
+#   become: true
+#   apt:
+#     deb: "{{ item }}"
+#     state: present
+#   loop:
+#     - "{{ ansible_user_dir }}/iperf/libiperf0.deb"
+#     - "{{ ansible_user_dir }}/iperf/libiperf-dev.deb"
+#     - "{{ ansible_user_dir }}/iperf/iperf3.deb"
+
+# - name: Remove iperf directory
+#   #become: true
+#   file:
+#     path: "{{ ansible_user_dir }}/iperf"
+#     state: absent
 
